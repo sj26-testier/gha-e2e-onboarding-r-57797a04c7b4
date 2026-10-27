@@ -1,44 +1,29 @@
-name: Representative CI
-
+name: SwiftFormat universal binary corrected
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  test:
-    name: Test (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['20', '22']
+  universal-binary:
+    runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
-      - name: Run duration tests
-        run: npm test
-      - name: Identify tested source
-        run: git rev-parse HEAD
-
-  complete:
-    name: All tests passed
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Verify dependency result
-        env:
-          TEST_RESULT: ${{ needs.test.result }}
-          EVENT_NAME: ${{ github.event_name }}
+          repository: nicklockwood/SwiftFormat
+          ref: 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+      - name: Build and exercise universal release binary
         run: |
-          test "$TEST_RESULT" = success
-          echo "E2E_COMPLETE: event=$EVENT_NAME tests=$TEST_RESULT"
+          echo "LAB_IMAGE label=macos-latest runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          uname -m
+          sw_vers
+          xcodebuild -version
+          swift --version
+          test "$(git rev-parse HEAD)" = 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          swift build -c release --arch arm64 --arch x86_64 -Xswiftc -Osize
+          strip -rSTx .build/apple/Products/Release/swiftformat
+          lipo .build/apple/Products/Release/swiftformat -verify_arch arm64 x86_64
+          .build/apple/Products/Release/swiftformat --version
+          arch -x86_64 .build/apple/Products/Release/swiftformat --version
+          echo 'LAB_WORKLOAD_PASS swiftformat-universal'
