@@ -1,0 +1,38 @@
+name: macOS label semantics
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  native-build:
+    name: Native build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-15-large, macos-15-xlarge, macos-27]
+    steps:
+      - name: Assert platform rather than accepting green fallback
+        run: |
+          echo "LAB_IMAGE label=${{ matrix.os }} runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          test "$(uname -s)" = Darwin
+          sw_vers
+          uname -m
+          xcodebuild -version
+          case '${{ matrix.os }}' in
+            macos-15-intel|macos-15-large) test "$(uname -m)" = x86_64; test "$(sw_vers -productVersion | cut -d. -f1)" = 15 ;;
+            macos-15-xlarge) test "$(uname -m)" = arm64; test "$(sw_vers -productVersion | cut -d. -f1)" = 15 ;;
+            macos-27) test "$(sw_vers -productVersion | cut -d. -f1)" = 27 ;;
+          esac
+      - uses: actions/checkout@v4
+        with:
+          repository: libuv/libuv
+          ref: 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+      - name: Build and test libuv
+        run: |
+          test "$(git rev-parse HEAD)" = 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+          cmake -B build -DBUILD_TESTING=ON
+          cmake --build build -j4
+          cd build && sudo UV_RUN_AS_ROOT=1 ctest -V

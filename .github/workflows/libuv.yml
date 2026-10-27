@@ -1,0 +1,71 @@
+name: libuv native macOS
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build-macos:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: libuv/libuv
+          ref: 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+      - name: Image and source evidence
+        run: |
+          test "$(git rev-parse HEAD)" = 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+          echo "LAB_IMAGE label=macos-15 runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          uname -m
+          sw_vers
+          xcodebuild -version
+          clang --version
+          cmake --version
+          brew --version
+      - name: Disable Firewall
+        run: |
+          /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+          sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0
+          /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+      - name: Setup
+        run: brew install ninja automake libtool
+      - name: Configure
+        run: cmake -B build -DBUILD_TESTING=ON -G Ninja
+      - name: Build
+        run: cmake --build build
+      - name: Platform output
+        run: |
+          ./build/uv_run_tests platform_output
+          ./build/uv_run_tests_a platform_output
+      - name: Test
+        run: cd build && sudo UV_RUN_AS_ROOT=1 ctest -V
+      - name: Autotools configure
+        if: always()
+        run: |
+          ./autogen.sh
+          mkdir build-auto
+          (cd build-auto && ../configure)
+          make -C build-auto -j4
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: libuv/libuv
+          ref: 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+      - name: Image and source evidence
+        run: |
+          test "$(git rev-parse HEAD)" = 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+      - name: Configure
+        run: cmake -B build-ios -GXcode -DCMAKE_SYSTEM_NAME:STRING=iOS -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED:BOOL=NO -DCMAKE_CONFIGURATION_TYPES:STRING=Release
+      - name: Build
+        run: |
+          cmake --build build-ios
+          ls -lh build-ios
+          echo 'LAB_WORKLOAD_PASS libuv-ios'
