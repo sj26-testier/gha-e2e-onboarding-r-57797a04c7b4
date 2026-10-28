@@ -10,9 +10,11 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-        with:
-          repository: libuv/libuv
-          ref: 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+      - name: Fetch pinned upstream source
+        run: |
+          git remote set-url origin https://github.com/libuv/libuv.git
+          git fetch --no-tags --depth=1 origin 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+          git checkout --detach FETCH_HEAD
       - name: Image and source evidence
         run: |
           test "$(git rev-parse HEAD)" = 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
@@ -52,9 +54,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          repository: libuv/libuv
-          ref: 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+      - name: Fetch pinned upstream source
+        run: |
+          git remote set-url origin https://github.com/libuv/libuv.git
+          git fetch --no-tags --depth=1 origin 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+          git checkout --detach FETCH_HEAD
       - name: Image and source evidence
         run: |
           test "$(git rev-parse HEAD)" = 338ac6ac0714e6d8043a2826c9b3bc78e85bb961

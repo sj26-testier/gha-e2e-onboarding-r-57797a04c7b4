@@ -29,9 +29,11 @@ jobs:
           xcode-version: latest-stable
       - name: Checkout pinned upstream
         uses: actions/checkout@v4
-        with:
-          repository: nicklockwood/SwiftFormat
-          ref: 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+      - name: Fetch pinned upstream source
+        run: |
+          git remote set-url origin https://github.com/nicklockwood/SwiftFormat.git
+          git fetch --no-tags --depth=1 origin 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          git checkout --detach FETCH_HEAD
       - name: Build and Test
         run: |
           test "$(git rev-parse HEAD)" = 468a7d32dedc8d352c191594b3b45d9fd8ba291b
@@ -52,9 +54,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          repository: nicklockwood/SwiftFormat
-          ref: 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+      - name: Fetch pinned upstream source
+        run: |
+          git remote set-url origin https://github.com/nicklockwood/SwiftFormat.git
+          git fetch --no-tags --depth=1 origin 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          git checkout --detach FETCH_HEAD
       - name: Build and exercise universal release binary
         run: |
           echo "LAB_IMAGE label=macos-latest runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
