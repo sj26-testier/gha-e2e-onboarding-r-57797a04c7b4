@@ -17,5 +17,12 @@
     "No paid GitHub runner provisioning. Native larger-runner or unavailable-label jobs may be canceled after recording non-availability; this is not a passing comparison."
   ],
   "budget": "One fixture repository/pipeline, one PR, three initial webhook-created Buildkite builds plus native Actions; no automatic retries",
-  "github_runner_reference": "https://github.com/actions/runner-images/blob/6d35e16176367288d91febefafbd221cb2da6ca1/README.md"
+  "github_runner_reference": "https://github.com/actions/runner-images/blob/6d35e16176367288d91febefafbd221cb2da6ca1/README.md",
+  "followup": {
+    "fixture": "xcode-27.yml",
+    "budget": "One additional focused PR and webhook build in the same isolated pipeline, plus native Actions; original workflows are not rerun",
+    "label_reference": "https://github.com/actions/runner-images/blob/6d35e16176367288d91febefafbd221cb2da6ca1/images/macos/xcode-27-arm64-Readme.md",
+    "adaptation": "Retain GitHub's xcode-27 label without explicit queue mapping; assert Darwin, ARM64 and macOS major 27 before the pinned libuv CMake build and tests",
+    "local_correction": "The initial universal-binary probe passed the filename after lipo -verify_arch, which lipo parsed as another architecture. Corrected locally to put the input filename first; initial evidence remains failed and no rerun is implied."
+  }
 }

@@ -65,7 +65,7 @@ jobs:
           test "$(git rev-parse HEAD)" = 468a7d32dedc8d352c191594b3b45d9fd8ba291b
           swift build -c release --arch arm64 --arch x86_64 -Xswiftc -Osize
           strip -rSTx .build/apple/Products/Release/swiftformat
-          lipo -verify_arch arm64 x86_64 .build/apple/Products/Release/swiftformat
+          lipo .build/apple/Products/Release/swiftformat -verify_arch arm64 x86_64
           .build/apple/Products/Release/swiftformat --version
           arch -x86_64 .build/apple/Products/Release/swiftformat --version
           echo 'LAB_WORKLOAD_PASS swiftformat-universal'

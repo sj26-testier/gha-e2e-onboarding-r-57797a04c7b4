@@ -1,0 +1,34 @@
+name: xcode-27 original label probe
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  xcode-27:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - name: Assert original label selects macOS 27 ARM64
+        run: |
+          echo "LAB_IMAGE label=xcode-27 runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          uname -s
+          uname -m
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$RUNNER_OS" = macOS
+          test "$RUNNER_ARCH" = ARM64
+          sw_vers
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 27
+          xcodebuild -version
+          swift --version
+      - uses: actions/checkout@v4
+        with:
+          repository: libuv/libuv
+          ref: 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+      - name: Compile and test pinned upstream libuv
+        run: |
+          test "$(git rev-parse HEAD)" = 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+          cmake -B build -DBUILD_TESTING=ON
+          cmake --build build -j4
+          cd build && sudo UV_RUN_AS_ROOT=1 ctest -V
