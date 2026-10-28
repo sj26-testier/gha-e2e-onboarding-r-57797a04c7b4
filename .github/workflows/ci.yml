@@ -1,44 +1,89 @@
-name: Representative CI
-
+name: SwiftFormat 14 paired path diagnosis
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  test:
-    name: Test (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['20', '22']
+  paired-paths:
+    runs-on: macos-14
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-      - name: Run duration tests
-        run: npm test
-      - name: Identify tested source
-        run: git rev-parse HEAD
-
-  complete:
-    name: All tests passed
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Verify dependency result
-        env:
-          TEST_RESULT: ${{ needs.test.result }}
-          EVENT_NAME: ${{ github.event_name }}
+      - name: Record actual paths and paired Foundation behavior
         run: |
-          test "$TEST_RESULT" = success
-          echo "E2E_COMPLETE: event=$EVENT_NAME tests=$TEST_RESULT"
+          echo "LAB_RUNTIME os=$RUNNER_OS arch=$RUNNER_ARCH"
+          sw_vers
+          xcodebuild -version
+          swift --version
+          for name in RUNNER_TEMP TMPDIR GITHUB_WORKSPACE PWD; do
+            value="${!name-}"
+            printf 'LAB_ENV %s=%s\n' "$name" "$value"
+            if test -d "$value"; then
+              printf 'LAB_CANONICAL %s=' "$name"
+              (cd "$value" && pwd -P)
+            fi
+          done
+          ls -ld /tmp /private/tmp
+          cat > "$RUNNER_TEMP/path-probe.swift" <<'SWIFT'
+          import Foundation
+          let manager = FileManager.default
+          for path in CommandLine.arguments.dropFirst() {
+              let original = URL(fileURLWithPath: path, isDirectory: true)
+              let input = original.standardizedFileURL
+              let child = try manager.contentsOfDirectory(at: input, includingPropertiesForKeys: nil)
+                  .first { $0.lastPathComponent == "sample.swift" }!
+              // Same output-path expression as pinned SwiftFormat enumerateFiles.
+              let output = URL(fileURLWithPath: original.path + child.path[input.path.endIndex..<child.path.endIndex])
+              print("LAB_URL original=\(original.path) standardized=\(input.path) resolved=\(original.resolvingSymlinksInPath().path)")
+              print("LAB_PAIR child=\(child.path) output=\(output.path) equal=\(child == output)")
+          }
+          SWIFT
+          alias_root=$(mktemp -d /tmp/gha-path-XXXXXXXX)
+          canonical_root=$(cd "$alias_root" && pwd -P)
+          home_root=$(mktemp -d "$HOME/gha-path-XXXXXXXX")
+          workspace_root=$(mktemp -d "$GITHUB_WORKSPACE/gha-path-XXXXXXXX")
+          for root in "$alias_root" "$home_root" "$workspace_root"; do
+            touch "$root/sample.swift"
+          done
+          swift "$RUNNER_TEMP/path-probe.swift" "$alias_root" "$canonical_root" "$home_root" "$workspace_root"
+          rm -rf "$alias_root" "$home_root" "$workspace_root"
+      - name: Fetch unchanged pinned upstream
+        run: |
+          git remote set-url origin https://github.com/nicklockwood/SwiftFormat.git
+          git fetch --no-tags --depth=1 origin 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+      - name: Run same two upstream assertions through both path spellings
+        run: |
+          # Common toolchain control; original runs selected different latest-stable Xcodes.
+          export DEVELOPER_DIR=/Applications/Xcode_15.4.app/Contents/Developer
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          swift --version
+          alias_root=$(mktemp -d /tmp/gha-swiftformat-XXXXXXXX)
+          canonical_root=$(cd "$alias_root" && pwd -P)
+          git archive HEAD | tar -x -C "$alias_root"
+          for spelling in alias canonical; do
+            if test "$spelling" = alias; then root=$alias_root; else root=$canonical_root; fi
+            echo "LAB_TEST_INPUT spelling=$spelling path=$root"
+            set +e
+            (cd "$root" && xcodebuild -project SwiftFormat.xcodeproj -scheme 'SwiftFormat (Framework)' -sdk macosx clean build test \
+              -only-testing:SwiftFormatTests/GlobsTests/testExpandPathWithWildcardAtEnd \
+              -only-testing:SwiftFormatTests/SwiftFormatTests/testInputFilesMatchOutputFilesForSameOutput \
+              -derivedDataPath "$RUNNER_TEMP/Build-$spelling") > "$RUNNER_TEMP/$spelling.log" 2>&1
+            result=$?
+            set -e
+            echo "LAB_TEST_RESULT spelling=$spelling exit=$result"
+            awk '/error: -\[/ { if (shown++ < 4) print } /Executed [0-9]+ tests/ || /\*\* TEST/ {print}' "$RUNNER_TEMP/$spelling.log"
+            if ! grep -q 'Executed 2 tests' "$RUNNER_TEMP/$spelling.log"; then
+              tail -40 "$RUNNER_TEMP/$spelling.log"
+              exit 1
+            fi
+            if test "$result" != 0 && ! grep -q 'error: -\[' "$RUNNER_TEMP/$spelling.log"; then
+              tail -40 "$RUNNER_TEMP/$spelling.log"
+              exit "$result"
+            fi
+          done
+          rm -rf "$alias_root"
+          echo 'LAB_DIAGNOSIS_COMPLETE expected failures retained in paired results'
