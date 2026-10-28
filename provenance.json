@@ -1,0 +1,34 @@
+{
+  "purpose": "Released importer macOS image validation; no queue or global flag changes",
+  "sources": [
+    "https://github.com/nicklockwood/SwiftFormat/blob/468a7d32dedc8d352c191594b3b45d9fd8ba291b/.github/workflows/build.yml",
+    "https://github.com/nicklockwood/SwiftFormat/blob/468a7d32dedc8d352c191594b3b45d9fd8ba291b/.github/workflows/release.yml",
+    "https://github.com/libuv/libuv/blob/338ac6ac0714e6d8043a2826c9b3bc78e85bb961/.github/workflows/CI-unix.yml"
+  ],
+  "adaptations": [
+    "Extract only macOS jobs; use pull_request to main in an isolated public fixture, with contents:read and bounded job timeouts.",
+    "Checkout exact upstream source commits in place of the event repository; retain upstream build/test commands.",
+    "Released importer v0.109.1 rejected the initial explicit checkout repository input before image selection (retained builds 6-9). Use ordinary checkout followed by git fetch of the same immutable upstream SHA and detached checkout. This changes only source acquisition, not runner labels, queues, image selectors or workload assertions.",
+    "SwiftFormat 0.55.5 source matrix is macos-13 and macos-latest. Retain macos-latest; omit retired 13 and add explicit 14/15/26 image coverage.",
+    "Retain SwiftFormat latest-stable setup-xcode selection and record both image-default and selected Xcode versions. Omit Codecov publishing and release version rewriting/uploading.",
+    "Retain universal release compile and strip; add lipo validation and native plus Rosetta execution.",
+    "libuv source macOS matrix is macos-15 and macos-15-intel; keep macos-15 in the workload workflow and isolate macos-15-intel in label semantics to avoid blocking supported workloads during import.",
+    "Retain libuv iOS macos-15, firewall commands, Homebrew install, CMake/Ninja, root ctest and always-run Autotools compilation. Replace unpinned npx envinfo with direct version evidence; replace checkout v7.0.1 with v4 for the established lab checkout contract.",
+    "Extend libuv label probe with 15-large/15-xlarge/27. Use the default CMake generator there to focus on scheduling/architecture, and assert Darwin, major and architecture before building.",
+    "No paid GitHub runner provisioning. Native larger-runner or unavailable-label jobs may be canceled after recording non-availability; this is not a passing comparison."
+  ],
+  "budget": "One fixture repository/pipeline, one PR, three initial webhook-created Buildkite builds plus native Actions; no automatic retries",
+  "github_runner_reference": "https://github.com/actions/runner-images/blob/6d35e16176367288d91febefafbd221cb2da6ca1/README.md",
+  "followup": {
+    "fixture": "xcode-27.yml",
+    "budget": "One additional focused PR and webhook build in the same isolated pipeline, plus native Actions; original workflows are not rerun",
+    "label_reference": "https://github.com/actions/runner-images/blob/6d35e16176367288d91febefafbd221cb2da6ca1/images/macos/xcode-27-arm64-Readme.md",
+    "adaptation": "Retain GitHub's xcode-27 label without explicit queue mapping; assert Darwin, ARM64 and macOS major 27 before the pinned libuv CMake build and tests",
+    "local_correction": "The initial universal-binary probe passed the filename after lipo -verify_arch, which lipo parsed as another architecture. Corrected to put the input filename first; native recovery run 40446526652 passed both slice verification and native/Rosetta execution. Initial failed evidence is retained."
+  },
+  "released_importer_comparison": {
+    "budget": "Four webhook workflows after the backend importer flag was disabled, followed by four with the source-acquisition adaptation after explicit-repository rejection; native Actions also run. No automatic retries.",
+    "workflow_files": ["ci.yml", "libuv.yml", "label-semantics.yml", "xcode-27.yml"],
+    "native_xcode27_baseline": "Run 40446304842 selected macOS 27.0.1 arm64 and Xcode 27.1, compiled libuv, then failed emfile in both test binaries (test-emfile.c:93, uv_tcp_connect error -24). Do not classify the same failure on Namespace as a Namespace-only regression."
+  }
+}

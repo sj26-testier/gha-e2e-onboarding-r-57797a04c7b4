@@ -1,44 +1,75 @@
-name: Representative CI
-
+name: SwiftFormat macOS images
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  test:
-    name: Test (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  xcode-tests:
+    name: Xcode tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '22']
+        os: [macos-latest, macos-14, macos-15, macos-26]
+    steps:
+      - name: Image default before Xcode selection
+        run: |
+          echo "LAB_IMAGE label=${{ matrix.os }} runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          uname -m
+          sw_vers
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
+      - name: Select Xcode version
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Checkout pinned upstream
+        uses: actions/checkout@v4
+      - name: Fetch pinned upstream source
+        run: |
+          git remote set-url origin https://github.com/nicklockwood/SwiftFormat.git
+          git fetch --no-tags --depth=1 origin 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          git checkout --detach FETCH_HEAD
+      - name: Build and Test
+        run: |
+          test "$(git rev-parse HEAD)" = 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          xcodebuild -version
+          git config user.name "test user"
+          git config user.email "test.user@noreply.com"
+          xcodebuild -project SwiftFormat.xcodeproj -scheme "SwiftFormat (Framework)" -sdk macosx clean build test -enableCodeCoverage YES -derivedDataPath Build/
+          cd Build/Build/ProfileData
+          cd $(ls -d */|head -n 1)
+          directory=${PWD##*/}
+          pathCoverage=Build/Build/ProfileData/${directory}/Coverage.profdata
+          cd ../../../../
+          xcrun llvm-cov export -format="lcov" -instr-profile $pathCoverage Build/Build/Products/Debug/SwiftFormat.framework/SwiftFormat > info.lcov
+          test -s info.lcov
+          echo "LAB_WORKLOAD_PASS swiftformat-xcode label=${{ matrix.os }}"
+  universal-binary:
+    runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-      - name: Run duration tests
-        run: npm test
-      - name: Identify tested source
-        run: git rev-parse HEAD
-
-  complete:
-    name: All tests passed
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Verify dependency result
-        env:
-          TEST_RESULT: ${{ needs.test.result }}
-          EVENT_NAME: ${{ github.event_name }}
+      - name: Fetch pinned upstream source
         run: |
-          test "$TEST_RESULT" = success
-          echo "E2E_COMPLETE: event=$EVENT_NAME tests=$TEST_RESULT"
+          git remote set-url origin https://github.com/nicklockwood/SwiftFormat.git
+          git fetch --no-tags --depth=1 origin 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          git checkout --detach FETCH_HEAD
+      - name: Build and exercise universal release binary
+        run: |
+          echo "LAB_IMAGE label=macos-latest runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          uname -m
+          sw_vers
+          xcodebuild -version
+          swift --version
+          test "$(git rev-parse HEAD)" = 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          swift build -c release --arch arm64 --arch x86_64 -Xswiftc -Osize
+          strip -rSTx .build/apple/Products/Release/swiftformat
+          lipo .build/apple/Products/Release/swiftformat -verify_arch arm64 x86_64
+          .build/apple/Products/Release/swiftformat --version
+          arch -x86_64 .build/apple/Products/Release/swiftformat --version
+          echo 'LAB_WORKLOAD_PASS swiftformat-universal'
