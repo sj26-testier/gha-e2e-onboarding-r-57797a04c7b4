@@ -1,89 +1,59 @@
-name: SwiftFormat 14 paired path diagnosis
+name: Image-default SwiftFormat controls
 on:
   pull_request:
     branches: [main]
 permissions:
   contents: read
 jobs:
-  paired-paths:
-    runs-on: macos-14
-    timeout-minutes: 15
+  framework:
+    name: Framework image default (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26, macos-27, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - name: Record actual paths and paired Foundation behavior
+      - name: Record image default without selecting Xcode
         run: |
-          echo "LAB_RUNTIME os=$RUNNER_OS arch=$RUNNER_ARCH"
+          echo "LAB_IMAGE label=${{ matrix.os }} runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
           sw_vers
+          xcode-select -p
           xcodebuild -version
           swift --version
-          for name in RUNNER_TEMP TMPDIR GITHUB_WORKSPACE PWD; do
-            value="${!name-}"
-            printf 'LAB_ENV %s=%s\n' "$name" "$value"
-            if test -d "$value"; then
-              printf 'LAB_CANONICAL %s=' "$name"
-              (cd "$value" && pwd -P)
-            fi
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --sdk iphoneos --show-sdk-version
+          for app in /Applications/Xcode*.app; do
+            printf 'LAB_INSTALLED_XCODE %s ' "$app"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/version.plist"
           done
-          ls -ld /tmp /private/tmp
-          cat > "$RUNNER_TEMP/path-probe.swift" <<'SWIFT'
-          import Foundation
-          let manager = FileManager.default
-          for path in CommandLine.arguments.dropFirst() {
-              let original = URL(fileURLWithPath: path, isDirectory: true)
-              let input = original.standardizedFileURL
-              let child = try manager.contentsOfDirectory(at: input, includingPropertiesForKeys: nil)
-                  .first { $0.lastPathComponent == "sample.swift" }!
-              // Same output-path expression as pinned SwiftFormat enumerateFiles.
-              let output = URL(fileURLWithPath: original.path + child.path[input.path.endIndex..<child.path.endIndex])
-              print("LAB_URL original=\(original.path) standardized=\(input.path) resolved=\(original.resolvingSymlinksInPath().path)")
-              print("LAB_PAIR child=\(child.path) output=\(output.path) equal=\(child == output)")
-          }
-          SWIFT
-          alias_root=$(mktemp -d /tmp/gha-path-XXXXXXXX)
-          canonical_root=$(cd "$alias_root" && pwd -P)
-          home_root=$(mktemp -d "$HOME/gha-path-XXXXXXXX")
-          workspace_root=$(mktemp -d "$GITHUB_WORKSPACE/gha-path-XXXXXXXX")
-          for root in "$alias_root" "$home_root" "$workspace_root"; do
-            touch "$root/sample.swift"
+          for name in RUNNER_TEMP TMPDIR GITHUB_WORKSPACE; do
+            printf 'LAB_ENV %s=%s\n' "$name" "${!name-}"
           done
-          swift "$RUNNER_TEMP/path-probe.swift" "$alias_root" "$canonical_root" "$home_root" "$workspace_root"
-          rm -rf "$alias_root" "$home_root" "$workspace_root"
-      - name: Fetch unchanged pinned upstream
+      - uses: actions/checkout@v4
+      - name: Fetch pinned upstream into home-directory control
         run: |
-          git remote set-url origin https://github.com/nicklockwood/SwiftFormat.git
-          git fetch --no-tags --depth=1 origin 468a7d32dedc8d352c191594b3b45d9fd8ba291b
-          git checkout --detach FETCH_HEAD
+          # Adaptation: unchanged upstream source, outside /tmp symlink aliases.
+          root=$(mktemp -d "$HOME/gha-swiftformat-XXXXXXXX")
+          git -C "$root" init
+          git -C "$root" fetch --no-tags --depth=1 https://github.com/nicklockwood/SwiftFormat.git 468a7d32dedc8d352c191594b3b45d9fd8ba291b
+          git -C "$root" checkout --detach FETCH_HEAD
+          echo "LAB_SOURCE_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Unchanged upstream framework build tests and coverage
+        run: |
+          cd "$LAB_SOURCE_ROOT"
+          pwd -P
           test "$(git rev-parse HEAD)" = 468a7d32dedc8d352c191594b3b45d9fd8ba291b
-      - name: Run same two upstream assertions through both path spellings
-        run: |
-          # Common toolchain control; original runs selected different latest-stable Xcodes.
-          export DEVELOPER_DIR=/Applications/Xcode_15.4.app/Contents/Developer
-          test -d "$DEVELOPER_DIR"
-          xcodebuild -version
-          swift --version
-          alias_root=$(mktemp -d /tmp/gha-swiftformat-XXXXXXXX)
-          canonical_root=$(cd "$alias_root" && pwd -P)
-          git archive HEAD | tar -x -C "$alias_root"
-          for spelling in alias canonical; do
-            if test "$spelling" = alias; then root=$alias_root; else root=$canonical_root; fi
-            echo "LAB_TEST_INPUT spelling=$spelling path=$root"
-            set +e
-            (cd "$root" && xcodebuild -project SwiftFormat.xcodeproj -scheme 'SwiftFormat (Framework)' -sdk macosx clean build test \
-              -only-testing:SwiftFormatTests/GlobsTests/testExpandPathWithWildcardAtEnd \
-              -only-testing:SwiftFormatTests/SwiftFormatTests/testInputFilesMatchOutputFilesForSameOutput \
-              -derivedDataPath "$RUNNER_TEMP/Build-$spelling") > "$RUNNER_TEMP/$spelling.log" 2>&1
-            result=$?
-            set -e
-            echo "LAB_TEST_RESULT spelling=$spelling exit=$result"
-            awk '/error: -\[/ { if (shown++ < 4) print } /Executed [0-9]+ tests/ || /\*\* TEST/ {print}' "$RUNNER_TEMP/$spelling.log"
-            if ! grep -q 'Executed 2 tests' "$RUNNER_TEMP/$spelling.log"; then
-              tail -40 "$RUNNER_TEMP/$spelling.log"
-              exit 1
-            fi
-            if test "$result" != 0 && ! grep -q 'error: -\[' "$RUNNER_TEMP/$spelling.log"; then
-              tail -40 "$RUNNER_TEMP/$spelling.log"
-              exit "$result"
-            fi
-          done
-          rm -rf "$alias_root"
-          echo 'LAB_DIAGNOSIS_COMPLETE expected failures retained in paired results'
+          git config user.name "test user"
+          git config user.email "test.user@noreply.com"
+          xcodebuild -project SwiftFormat.xcodeproj -scheme "SwiftFormat (Framework)" -sdk macosx clean build test -enableCodeCoverage YES -derivedDataPath Build/
+          cd Build/Build/ProfileData
+          cd $(ls -d */|head -n 1)
+          directory=${PWD##*/}
+          pathCoverage=Build/Build/ProfileData/${directory}/Coverage.profdata
+          cd ../../../../
+          xcrun llvm-cov export -format="lcov" -instr-profile $pathCoverage Build/Build/Products/Debug/SwiftFormat.framework/SwiftFormat > info.lcov
+          test -s info.lcov
+          echo "LAB_WORKLOAD_PASS swiftformat-image-default label=${{ matrix.os }}"
