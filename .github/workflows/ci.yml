@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-27]
+        os: [macos-15]
     steps:
       - name: Record image-default toolchain
         run: |
