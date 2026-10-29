@@ -1,44 +1,114 @@
-name: Representative CI
-
+name: macOS image runtime comparison
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  test:
-    name: Test (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  javascript-bootstrap:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Record default and bootstrap start
+        run: |
+          date -u
+          sw_vers
+          uname -m
+          xcode-select -p
+          xcodebuild -version
+          echo "LAB_TOOL_CACHE=${RUNNER_TOOL_CACHE-}"
+          echo "LAB_BOOTSTRAP_START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Select installed Xcode with original Node24 action
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: latest-stable
+      - name: Record successful bootstrap duration
+        run: |
+          echo "LAB_BOOTSTRAP_SECONDS=$(( $(date +%s) - LAB_BOOTSTRAP_START ))"
+          xcodebuild -version
+  libuv:
+    name: libuv default and terminal control (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '22']
+        os: [macos-15, macos-27]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-      - name: Run duration tests
-        run: npm test
-      - name: Identify tested source
-        run: git rev-parse HEAD
-
-  complete:
-    name: All tests passed
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Verify dependency result
-        env:
-          TEST_RESULT: ${{ needs.test.result }}
-          EVENT_NAME: ${{ github.event_name }}
+      - name: Record image-default toolchain
         run: |
-          test "$TEST_RESULT" = success
-          echo "E2E_COMPLETE: event=$EVENT_NAME tests=$TEST_RESULT"
+          echo "LAB_IMAGE label=${{ matrix.os }} runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcode-select -p
+          xcodebuild -version
+          clang --version
+          cmake --version
+          xcrun --sdk iphoneos --show-sdk-version
+          for app in /Applications/Xcode*.app; do
+            printf 'LAB_INSTALLED_XCODE %s ' "$app"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/version.plist"
+          done
+      - uses: actions/checkout@v4
+      - name: Fetch pinned libuv into home-directory control
+        run: |
+          root=$(mktemp -d "$HOME/gha-libuv-XXXXXXXX")
+          git -C "$root" init
+          git -C "$root" fetch --no-tags --depth=1 https://github.com/libuv/libuv.git 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+          git -C "$root" checkout --detach FETCH_HEAD
+          echo "LAB_SOURCE_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Upstream CMake build
+        run: |
+          cd "$LAB_SOURCE_ROOT"
+          test "$(git rev-parse HEAD)" = 338ac6ac0714e6d8043a2826c9b3bc78e85bb961
+          cmake -B build -DBUILD_TESTING=ON
+          cmake --build build -j4
+          ./build/uv_run_tests platform_output
+          ./build/uv_run_tests_a platform_output
+      - name: Full upstream tests without a controlling terminal
+        id: full-tests
+        continue-on-error: true
+        run: |
+          cd "$LAB_SOURCE_ROOT/build"
+          # Disclosed control: new session, like native Actions' non-terminal execution.
+          # Do not alter or exclude upstream test assertions. ctest bounds each binary.
+          python3 - <<'PY'
+          import subprocess, sys, time
+          start = time.monotonic()
+          result = subprocess.run(['sudo', 'UV_RUN_AS_ROOT=1', 'ctest', '-V', '--timeout', '240'], start_new_session=True)
+          print(f'LAB_CTEST detached=true exit={result.returncode} seconds={time.monotonic()-start:.1f}', flush=True)
+          sys.exit(result.returncode)
+          PY
+      - name: Original terminal context osx_select reproduction
+        id: terminal-test
+        continue-on-error: true
+        run: |
+          cd "$LAB_SOURCE_ROOT/build"
+          sudo UV_RUN_AS_ROOT=1 "$(command -v python3)" - <<'PY'
+          import os, signal, subprocess, sys, time
+          start = time.monotonic()
+          child = subprocess.Popen(['./uv_run_tests', 'osx_select'], preexec_fn=os.setpgrp)
+          try:
+              code = child.wait(timeout=30)
+          except subprocess.TimeoutExpired:
+              os.killpg(child.pid, signal.SIGKILL)
+              child.wait()
+              code = 124
+          print(f'LAB_OSX_SELECT detached=false exit={code} seconds={time.monotonic()-start:.1f}', flush=True)
+          sys.exit(code)
+          PY
+      - name: Upstream iOS build on missing major27
+        if: matrix.os == 'macos-27'
+        run: |
+          cd "$LAB_SOURCE_ROOT"
+          cmake -B build-ios -GXcode -DCMAKE_SYSTEM_NAME:STRING=iOS -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED:BOOL=NO -DCMAKE_CONFIGURATION_TYPES:STRING=Release
+          cmake --build build-ios
+          test -s build-ios/Release-iphoneos/libuv.a
+          echo 'LAB_WORKLOAD_PASS libuv-ios27'
+      - name: Preserve failed tests in job conclusion
+        if: always()
+        run: |
+          echo 'LAB_OUTCOMES full=${{ steps.full-tests.outcome }} terminal=${{ steps.terminal-test.outcome }}'
+          test '${{ steps.full-tests.outcome }}' = success
+          test '${{ steps.terminal-test.outcome }}' = success
