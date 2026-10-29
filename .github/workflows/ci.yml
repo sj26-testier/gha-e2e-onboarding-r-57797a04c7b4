@@ -1,4 +1,4 @@
-name: SwiftFormat Xcode27 deployment-target control
+name: Automatic macOS15 Xcode26 validation
 on:
   pull_request:
     branches: [main]
@@ -6,32 +6,64 @@ permissions:
   contents: read
 jobs:
   framework:
-    runs-on: macos-27
-    timeout-minutes: 20
+    name: Automatic macos-15 framework and managed Node action
+    runs-on: macos-15
+    timeout-minutes: 25
     steps:
-      - name: Record image-default Xcode
+      - name: Record and assert image default before any selection
         run: |
-          echo "LAB_IMAGE label=macos-27 runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          echo "LAB_IMAGE label=macos-15 runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
           sw_vers
-          uname -m
           xcode-select -p
           xcodebuild -version
+          xcodebuild -version | head -1 | grep '^Xcode 26'
           swift --version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --sdk iphoneos --show-sdk-version
+          for app in /Applications/Xcode*.app; do
+            printf 'LAB_INSTALLED_XCODE %s ' "$app"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/version.plist"
+            /usr/libexec/PlistBuddy -c 'Print :ProductBuildVersion' "$app/Contents/version.plist"
+          done
+          for name in RUNNER_TEMP TMPDIR GITHUB_WORKSPACE RUNNER_TOOL_CACHE; do
+            printf 'LAB_ENV %s=%s\n' "$name" "${!name-}"
+          done
       - uses: actions/checkout@v4
-      - name: Fetch unchanged pinned upstream into home
+      - name: Fetch pinned upstream into home-directory control
         run: |
+          # Same path control as previous image tests; upstream source is unchanged.
           root=$(mktemp -d "$HOME/gha-swiftformat-XXXXXXXX")
           git -C "$root" init
           git -C "$root" fetch --no-tags --depth=1 https://github.com/nicklockwood/SwiftFormat.git 468a7d32dedc8d352c191594b3b45d9fd8ba291b
           git -C "$root" checkout --detach FETCH_HEAD
           echo "LAB_SOURCE_ROOT=$root" >> "$GITHUB_ENV"
-      - name: Framework tests with supported deployment target
+      - name: Unchanged upstream framework build tests and coverage
         run: |
           cd "$LAB_SOURCE_ROOT"
+          pwd -P
           test "$(git rev-parse HEAD)" = 468a7d32dedc8d352c191594b3b45d9fd8ba291b
           git config user.name "test user"
           git config user.email "test.user@noreply.com"
-          # Adaptation: Xcode27 rejects upstream's 10.14 deployment target.
-          # Only the deployment target changes; source/tests and default Xcode do not.
-          xcodebuild -project SwiftFormat.xcodeproj -scheme "SwiftFormat (Framework)" -sdk macosx clean build test -enableCodeCoverage YES -derivedDataPath Build/ MACOSX_DEPLOYMENT_TARGET=12.0
-          echo 'LAB_WORKLOAD_PASS swiftformat-xcode27-deployment12'
+          xcodebuild -project SwiftFormat.xcodeproj -scheme "SwiftFormat (Framework)" -sdk macosx clean build test -enableCodeCoverage YES -derivedDataPath Build/
+          cd Build/Build/ProfileData
+          cd $(ls -d */|head -n 1)
+          directory=${PWD##*/}
+          pathCoverage=Build/Build/ProfileData/${directory}/Coverage.profdata
+          cd ../../../../
+          xcrun llvm-cov export -format="lcov" -instr-profile $pathCoverage Build/Build/Products/Debug/SwiftFormat.framework/SwiftFormat > info.lcov
+          test -s info.lcov
+          echo "LAB_WORKLOAD_PASS swiftformat-image-default label=macos-15"
+          echo "LAB_BOOTSTRAP_START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Ordinary Node24 action through managed runtime
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: '26'
+      - name: Assert managed action completion
+        run: |
+          echo "LAB_BOOTSTRAP_SECONDS=$(( $(date +%s) - LAB_BOOTSTRAP_START ))"
+          xcodebuild -version
+          xcodebuild -version | head -1 | grep '^Xcode 26'
+          echo LAB_MANAGED_NODE_ACTION_PASS
