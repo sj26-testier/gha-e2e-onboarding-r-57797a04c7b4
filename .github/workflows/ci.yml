@@ -23,11 +23,13 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
       - uses: actions/checkout@v4
-      - name: Fetch pinned upstream in traversable home workspace
+      - name: Fetch pinned upstream in traversable shared workspace
         run: |
-          root=$(mktemp -d "$HOME/gha-libuv-XXXXXXXX")
+          stat -f 'LAB_PARENT_MODE=%Lp path=%N' "$HOME" /Users /Users/Shared
+          root=$(mktemp -d /Users/Shared/gha-libuv-XXXXXXXX)
           stat -f 'LAB_INITIAL_ROOT_MODE=%Lp' "$root"
           # Upstream spawn tests drop to nobody and must traverse the source path.
+          # Do not relax permissions on the runner's private home directory.
           chmod 755 "$root"
           sudo -u nobody test -x "$root"
           stat -f 'LAB_CONTROL_ROOT_MODE=%Lp' "$root"
